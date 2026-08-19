@@ -1,0 +1,57 @@
+# Project databases for the Flight Price Analysis pipeline.
+#
+# Two databases, two very different jobs:
+#   mysql-staging      -> raw landing zone. An unmodified copy of the CSV.
+#   postgres-analytics -> the published, trustworthy tables Finance queries.
+
+services:
+
+  mysql-staging:
+    image: mysql:8.4
+    container_name: flight-mysql-staging
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change_me_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-flight_staging}
+      MYSQL_USER: ${MYSQL_USER:-flight_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change_me_mysql}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-staging-data:/var/lib/mysql
+      # Any .sql file dropped in this folder runs ONCE, the first time the
+      # database is created. ':ro' mounts it read-only.
+      - ./sql/init_mysql.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      # Compose will not report this container as healthy until MySQL
+      # actually answers a ping, not merely when the process starts.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-change_me_root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  postgres-analytics:
+    image: postgres:16
+    container_name: flight-postgres-analytics
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_ANALYTICS_DB:-flight_analytics}
+      POSTGRES_USER: ${POSTGRES_ANALYTICS_USER:-flight_app}
+      POSTGRES_PASSWORD: ${POSTGRES_ANALYTICS_PASSWORD:-change_me_postgres}
+    ports:
+      # 5433 on the host to keep 5432 free for anything else.
+      - "5433:5432"
+    volumes:
+      - postgres-analytics-data:/var/lib/postgresql/data
+      - ./sql/init_postgres.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ANALYTICS_USER:-flight_app} -d ${POSTGRES_ANALYTICS_DB:-flight_analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  mysql-staging-data:
+  postgres-analytics-data:
