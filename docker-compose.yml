@@ -8,7 +8,7 @@ services:
 
   mysql-staging:
     image: mysql:8.4
-    container_name: flight-mysql-staging
+    container_name: mysql-staging
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change_me_root}
@@ -21,7 +21,7 @@ services:
       - mysql-staging-data:/var/lib/mysql
       # Any .sql file dropped in this folder runs ONCE, the first time the
       # database is created. ':ro' mounts it read-only.
-      - ./sql/init_mysql.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./sql/mysql/mysql.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
     healthcheck:
       # Compose will not report this container as healthy until MySQL
       # actually answers a ping, not merely when the process starts.
@@ -33,7 +33,7 @@ services:
 
   postgres-analytics:
     image: postgres:16
-    container_name: flight-postgres-analytics
+    container_name: postgres-analytics
     restart: always
     environment:
       POSTGRES_DB: ${POSTGRES_ANALYTICS_DB:-flight_analytics}
@@ -44,7 +44,9 @@ services:
       - "5433:5432"
     volumes:
       - postgres-analytics-data:/var/lib/postgresql/data
-      - ./sql/init_postgres.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      # No init script yet - analytics schema isn't designed. Add
+      # ./sql/postgres/postgres.sql here (same pattern as mysql-staging)
+      # once it exists.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ANALYTICS_USER:-flight_app} -d ${POSTGRES_ANALYTICS_DB:-flight_analytics}"]
       interval: 10s
