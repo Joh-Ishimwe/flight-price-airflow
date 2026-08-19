@@ -10,7 +10,7 @@ import sys
 import pandas as pd
 from sqlalchemy import text
 
-from src.ingestion.ingest_to_mysql import get_engine
+from src.ingestion.ingest_to_mysql import get_engine, get_latest_batch_id
 
 STAGING_TABLE = "stg_flight_prices"
 RESULTS_TABLE = "stg_validation_results"
@@ -21,20 +21,6 @@ REQUIRED_COLUMNS = [
     "base_fare_bdt", "tax_surcharge_bdt", "total_fare_bdt",
 ]
 VALID_ROUTE_CODE = r"^[A-Z]{3}$"
-
-
-def get_latest_batch_id(engine) -> str:
-    """Most recent successfully-ingested batch."""
-    with engine.connect() as conn:
-        row = conn.execute(
-            text(
-                "SELECT batch_id FROM ingestion_runs "
-                "WHERE status = 'SUCCESS' ORDER BY started_at DESC LIMIT 1"
-            )
-        ).fetchone()
-    if row is None:
-        raise ValueError("No successful ingestion batch found to validate.")
-    return row[0]
 
 
 def _check_missing(df: pd.DataFrame) -> pd.Series:

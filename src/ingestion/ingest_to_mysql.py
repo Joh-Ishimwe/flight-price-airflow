@@ -53,6 +53,20 @@ def get_engine():
     )
 
 
+def get_latest_batch_id(engine) -> str:
+    """Most recent successfully-ingested batch."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"SELECT batch_id FROM {RUNS_TABLE} "
+                "WHERE status = 'SUCCESS' ORDER BY started_at DESC LIMIT 1"
+            )
+        ).fetchone()
+    if row is None:
+        raise ValueError("No successful ingestion batch found.")
+    return row[0]
+
+
 def _now() -> datetime:
     """UTC timestamp, naive - MySQL's DATETIME columns don't store tzinfo."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
