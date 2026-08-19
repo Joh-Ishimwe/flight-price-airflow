@@ -44,9 +44,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres-analytics-data:/var/lib/postgresql/data
-      # No init script yet - analytics schema isn't designed. Add
-      # ./sql/postgres/postgres.sql here (same pattern as mysql-staging)
-      # once it exists.
+      - ./sql/postgres/postgres.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ANALYTICS_USER:-flight_app} -d ${POSTGRES_ANALYTICS_DB:-flight_analytics}"]
       interval: 10s
