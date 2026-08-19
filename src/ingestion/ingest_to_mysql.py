@@ -1,6 +1,11 @@
-"""Load the flight price CSV into the MySQL staging table."""
+"""Load the flight price CSV into the MySQL staging table.
+
+Append-only: each run is its own batch, never a wholesale replace.
+"""
 
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -11,7 +16,10 @@ from src.utils.settings import get_mysql_config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CSV_PATH = PROJECT_ROOT / "data" / "raw" / "Flight_Price_Dataset_of_Bangladesh.csv"
 TABLE = "stg_flight_prices"
+RUNS_TABLE = "ingestion_runs"
 CHUNK_SIZE = 10_000
+# Rows per INSERT statement, to stay under MySQL's max_allowed_packet.
+SQL_INSERT_CHUNK = 1_000
 
 # CSV header -> staging column name.
 COLUMN_MAP = {
@@ -45,39 +53,91 @@ def get_engine():
     )
 
 
+def _now() -> datetime:
+    """UTC timestamp, naive - MySQL's DATETIME columns don't store tzinfo."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _start_run(engine, batch_id: str, source_file: str) -> None:
+    """Log the run before loading data - staging's FK needs the batch to exist first."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                INSERT INTO {RUNS_TABLE} (batch_id, source_file, status, started_at)
+                VALUES (:batch_id, :source_file, 'RUNNING', :started_at)
+                """
+            ),
+            {"batch_id": batch_id, "source_file": source_file, "started_at": _now()},
+        )
+
+
+def _finish_run(engine, batch_id: str, status: str, rows: int, error_message: str = None) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {RUNS_TABLE}
+                SET status = :status,
+                    rows_in_source = :rows,
+                    rows_loaded = :rows,
+                    error_message = :error_message,
+                    finished_at = :finished_at
+                WHERE batch_id = :batch_id
+                """
+            ),
+            {
+                "status": status,
+                "rows": rows,
+                "error_message": error_message,
+                "finished_at": _now(),
+                "batch_id": batch_id,
+            },
+        )
+
+
 def ingest() -> int:
     if not CSV_PATH.exists():
         raise FileNotFoundError(f"CSV not found: {CSV_PATH}")
 
     engine = get_engine()
+    batch_id = str(uuid.uuid4())
+    source_file = CSV_PATH.name
     total = 0
 
-    # Empty the table first so re-running produces the same result
-    # instead of duplicating every row.
-    with engine.begin() as conn:
-        conn.execute(text(f"TRUNCATE TABLE {TABLE}"))
+    _start_run(engine, batch_id, source_file)
+    print(f"batch {batch_id}: started")
 
-    reader = pd.read_csv(
-        CSV_PATH,
-        chunksize=CHUNK_SIZE,
-        parse_dates=["Departure Date & Time", "Arrival Date & Time"],
-    )
-
-    for i, chunk in enumerate(reader, start=1):
-        chunk = chunk.rename(columns=COLUMN_MAP)
-        chunk = chunk[list(COLUMN_MAP.values())]  # drop anything unexpected
-
-        chunk.to_sql(
-            TABLE,
-            con=engine,
-            if_exists="append",   # never "replace" - that would drop your schema
-            index=False,
-            method="multi",       # batch rows per INSERT instead of one at a time
+    try:
+        reader = pd.read_csv(
+            CSV_PATH,
+            chunksize=CHUNK_SIZE,
+            parse_dates=["Departure Date & Time", "Arrival Date & Time"],
         )
 
-        total += len(chunk)
-        print(f"chunk {i}: {len(chunk):,} rows  (running total {total:,})")
+        for i, chunk in enumerate(reader, start=1):
+            chunk = chunk.rename(columns=COLUMN_MAP)
+            chunk = chunk[list(COLUMN_MAP.values())]  # drop anything unexpected
+            chunk["source_file"] = source_file
+            chunk["batch_id"] = batch_id
 
+            chunk.to_sql(
+                TABLE,
+                con=engine,
+                if_exists="append",   # always append - staging never gets wiped
+                index=False,
+                method="multi",       # batch rows per INSERT instead of one at a time
+                chunksize=SQL_INSERT_CHUNK,
+            )
+
+            total += len(chunk)
+            print(f"chunk {i}: {len(chunk):,} rows  (running total {total:,})")
+
+    except Exception as exc:
+        _finish_run(engine, batch_id, status="FAILED", rows=total, error_message=str(exc))
+        raise
+
+    _finish_run(engine, batch_id, status="SUCCESS", rows=total)
     return total
 
 
