@@ -93,6 +93,67 @@ python -m src.transform.compute_kpis
 python -m src.loading.load_to_postgres
 ```
 
+## Tests
+
+14 unit tests, pure pandas logic, no DB needed:
+
+```
+python -m pytest tests/ -v
+```
+
+| File | Covers |
+|---|---|
+| `tests/test_validation.py` | each validation check (missing fields, negative fares, invalid routes, bad duration) |
+| `tests/test_transform.py` | Total Fare recompute, all 4 KPI calculations |
+
+**CI** (`.github/workflows/ci.yml`) runs on every push, 3 jobs:
+
+| Job | What it checks |
+|---|---|
+| `unit-tests` | the 14 tests above |
+| `dag-integrity` | the DAG actually parses, no import errors |
+| `integration` | the real pipeline (ingest → validate → transform → load) against live MySQL/Postgres containers, using a small fixture CSV (`tests/fixtures/sample_flights.csv`) instead of the real dataset |
+
+## Repo structure
+
+```
+flight-price-airflow/
+├── dags/
+│   └── flight_price_elt_dag.py     # the DAG - 4 tasks, wires everything together
+│
+├── src/
+│   ├── ingestion/
+│   │   └── ingest_to_mysql.py      # CSV -> MySQL staging
+│   ├── validation/
+│   │   └── validate_staging.py     # flags bad rows, quality alerts
+│   ├── transform/
+│   │   └── compute_kpis.py         # recomputes Total Fare, computes KPIs
+│   ├── loading/
+│   │   └── load_to_postgres.py     # writes results to Postgres
+│   └── utils/
+│       └── settings.py             # all env var / DB config, one place
+│
+├── sql/
+│   ├── mysql/mysql.sql             # staging schema
+│   └── postgres/postgres.sql       # analytics schema
+│
+├── tests/
+│   ├── test_validation.py          # unit tests
+│   ├── test_transform.py           # unit tests
+│   └── fixtures/sample_flights.csv # small CSV used by CI's integration test
+│
+├── script/
+│   └── download_dataset.py         # pulls the dataset from Kaggle
+│
+├── notebooks/                      # exploratory analysis, not part of the pipeline
+│
+├── .github/workflows/ci.yml        # tests + integration run on every push
+├── docker-compose.yml              # all services: MySQL, Postgres, Airflow, MailHog
+├── Dockerfile.airflow              # custom Airflow image (adds our deps)
+├── requirements.txt                # runtime deps
+└── requirements-dev.txt            # + notebook/EDA/test tooling
+```
+
 ## Challenges
 
 | Challenge | Resolution |
