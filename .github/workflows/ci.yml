@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+
+  unit-tests:
+    # Pure pandas logic, no DB needed - fast, runs on every push.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest tests/ -v
+
+  dag-integrity:
+    # Confirms the DAG(s) actually parse - same Airflow version as Dockerfile.airflow.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Airflow + our deps, constrained the same way Dockerfile.airflow is
+        run: |
+          pip install "apache-airflow==2.9.3" \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.11.txt"
+          pip install -r requirements.txt \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.11.txt"
+      - name: Check DAGs import with no errors
+        env:
+          AIRFLOW_HOME: /home/runner/airflow_home
+        run: |
+          mkdir -p "$AIRFLOW_HOME/dags"
+          cp dags/*.py "$AIRFLOW_HOME/dags/"
+          cp -r src "$AIRFLOW_HOME/"
+          airflow db init
+          cd "$AIRFLOW_HOME"
+          errors=$(airflow dags list-import-errors)
+          echo "$errors"
+          echo "$errors" | grep -q "No data found"
+
+  integration:
+    # Runs the real pipeline (ingest -> validate -> transform -> load)
+    # against real MySQL/Postgres service containers. Uses a small fixture
+    # CSV, not the real dataset - data/ is gitignored, and this job is
+    # about proving the wiring works, not re-checking business logic
+    # (unit tests already cover that).
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root_pw
+          MYSQL_DATABASE: flight_staging
+          MYSQL_USER: flight_app
+          MYSQL_PASSWORD: app_pw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot_pw"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: flight_analytics
+          POSTGRES_USER: flight_app
+          POSTGRES_PASSWORD: app_pw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U flight_app -d flight_analytics"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_USER: flight_app
+      MYSQL_PASSWORD: app_pw
+      MYSQL_DATABASE: flight_staging
+      POSTGRES_ANALYTICS_HOST: 127.0.0.1
+      POSTGRES_ANALYTICS_PORT: 5432
+      POSTGRES_ANALYTICS_USER: flight_app
+      POSTGRES_ANALYTICS_PASSWORD: app_pw
+      POSTGRES_ANALYTICS_DB: flight_analytics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-dev.txt
+      - name: Apply schemas
+        # Service containers don't auto-run our init scripts like docker-compose does.
+        run: |
+          mysql -h127.0.0.1 -uroot -proot_pw < sql/mysql/mysql.sql
+          PGPASSWORD=app_pw psql -h127.0.0.1 -U flight_app -d flight_analytics -f sql/postgres/postgres.sql
+      - name: Stage the fixture CSV where ingest expects it
+        run: |
+          mkdir -p data/raw
+          cp tests/fixtures/sample_flights.csv "data/raw/Flight_Price_Dataset_of_Bangladesh.csv"
+      - name: Run the real pipeline end-to-end
+        run: |
+          python -m src.ingestion.ingest_to_mysql
+          python -m src.validation.validate_staging
+          python -m src.loading.load_to_postgres
+      - name: Verify data actually landed in Postgres
+        run: |
+          python -c "
+          from sqlalchemy import text
+          from src.loading.load_to_postgres import get_pg_engine
+          engine = get_pg_engine()
+          with engine.connect() as conn:
+              fact_rows = conn.execute(text('SELECT COUNT(*) FROM fact_flight_prices')).scalar()
+              kpi_rows = conn.execute(text('SELECT COUNT(*) FROM kpi_avg_fare_by_airline')).scalar()
+              assert fact_rows > 0, 'No rows landed in fact_flight_prices'
+              assert kpi_rows > 0, 'No rows landed in kpi_avg_fare_by_airline'
+              print(f'OK: {fact_rows} fact rows, {kpi_rows} airline KPI rows')
+          "

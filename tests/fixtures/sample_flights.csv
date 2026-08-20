@@ -1,0 +1,13 @@
+Airline,Source,Source Name,Destination,Destination Name,Departure Date & Time,Arrival Date & Time,Duration (hrs),Stopovers,Aircraft Type,Class,Booking Source,Base Fare (BDT),Tax & Surcharge (BDT),Total Fare (BDT),Seasonality,Days Before Departure
+Biman Bangladesh Airlines,DAC,Hazrat Shahjalal International Airport,CXB,Cox's Bazar Airport,2026-01-10 06:00:00,2026-01-10 07:00:00,1.0,Direct,Boeing 737,Economy,Online Website,5000.0,500.0,5500.0,Regular,20
+US-Bangla Airlines,DAC,Hazrat Shahjalal International Airport,CGP,Shah Amanat International Airport,2026-01-11 08:00:00,2026-01-11 09:00:00,1.0,Direct,Airbus A320,Economy,Travel Agency,4500.0,450.0,4950.0,Regular,15
+NovoAir,DAC,Hazrat Shahjalal International Airport,ZYL,Osmani International Airport,2026-01-12 09:00:00,2026-01-12 10:00:00,1.0,Direct,ATR 72,Economy,Online Website,4000.0,400.0,4400.0,Regular,10
+Biman Bangladesh Airlines,CXB,Cox's Bazar Airport,DAC,Hazrat Shahjalal International Airport,2026-01-13 10:00:00,2026-01-13 11:00:00,1.0,Direct,Boeing 737,Business,Travel Agency,9000.0,900.0,9900.0,Eid,5
+US-Bangla Airlines,CGP,Shah Amanat International Airport,DAC,Hazrat Shahjalal International Airport,2026-01-14 11:00:00,2026-01-14 12:00:00,1.0,Direct,Airbus A320,Economy,Online Website,4600.0,460.0,5060.0,Eid,3
+NovoAir,ZYL,Osmani International Airport,DAC,Hazrat Shahjalal International Airport,2026-01-15 12:00:00,2026-01-15 13:00:00,1.0,Direct,ATR 72,Economy,Travel Agency,4100.0,410.0,4510.0,Winter Holidays,8
+Biman Bangladesh Airlines,DAC,Hazrat Shahjalal International Airport,ZYL,Osmani International Airport,2026-01-16 13:00:00,2026-01-16 14:00:00,1.0,Direct,Boeing 737,Economy,Online Website,4200.0,420.0,4620.0,Winter Holidays,12
+US-Bangla Airlines,DAC,Hazrat Shahjalal International Airport,CXB,Cox's Bazar Airport,2026-01-17 14:00:00,2026-01-17 15:00:00,1.0,Direct,Airbus A320,Economy,Travel Agency,4700.0,470.0,9999.0,Hajj,7
+NovoAir,CGP,Shah Amanat International Airport,ZYL,Osmani International Airport,2026-01-18 15:00:00,2026-01-18 16:00:00,1.0,Direct,ATR 72,Economy,Online Website,4300.0,430.0,4730.0,Hajj,6
+Biman Bangladesh Airlines,ZYL,Osmani International Airport,CGP,Shah Amanat International Airport,2026-01-19 16:00:00,2026-01-19 17:00:00,1.0,Direct,Boeing 737,Economy,Travel Agency,4400.0,440.0,4840.0,Regular,25
+US-Bangla Airlines,DAC,Hazrat Shahjalal International Airport,DAC,Hazrat Shahjalal International Airport,2026-01-20 17:00:00,2026-01-20 18:00:00,1.0,Direct,Airbus A320,Economy,Online Website,4800.0,480.0,5280.0,Regular,18
+NovoAir,DAC,Hazrat Shahjalal International Airport,CGP,Shah Amanat International Airport,2026-01-21 18:00:00,2026-01-21 19:00:00,1.0,Direct,ATR 72,Economy,Travel Agency,4900.0,490.0,5390.0,Regular,22
