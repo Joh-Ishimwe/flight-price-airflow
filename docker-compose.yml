@@ -1,8 +1,58 @@
-# Project databases for the Flight Price Analysis pipeline.
+# Flight Price Analysis pipeline.
 #
-# Two databases, two very different jobs:
 #   mysql-staging      -> raw landing zone. An unmodified copy of the CSV.
 #   postgres-analytics -> the published, trustworthy tables Finance queries.
+#   airflow-metadata   -> Airflow's own internal DB. Nothing to do with our data.
+#   airflow-*          -> orchestrates the pipeline. Tasks call our existing
+#                         src/ scripts directly (PythonOperator), so no
+#                         MySQL/Postgres provider packages are needed - just
+#                         our own runtime deps (see Dockerfile.airflow).
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-metadata/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__FERNET_KEY: ''
+    # Internal Docker network hostnames/ports - not the host-mapped ones
+    # (3307/5433) used when running scripts from the host machine.
+    MYSQL_HOST: mysql-staging
+    MYSQL_PORT: 3306
+    MYSQL_USER: ${MYSQL_USER:-flight_app}
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change_me_mysql}
+    MYSQL_DATABASE: ${MYSQL_DATABASE:-flight_staging}
+    POSTGRES_ANALYTICS_HOST: postgres-analytics
+    POSTGRES_ANALYTICS_PORT: 5432
+    POSTGRES_ANALYTICS_USER: ${POSTGRES_ANALYTICS_USER:-flight_app}
+    POSTGRES_ANALYTICS_PASSWORD: ${POSTGRES_ANALYTICS_PASSWORD:-change_me_postgres}
+    POSTGRES_ANALYTICS_DB: ${POSTGRES_ANALYTICS_DB:-flight_analytics}
+    PYTHONPATH: /opt/airflow
+    # Failure alerts: mailhog is a fake SMTP server + web inbox, so this is
+    # testable locally without real email credentials. Swap the host for a
+    # real SMTP provider to go to production.
+    AIRFLOW__SMTP__SMTP_HOST: mailhog
+    AIRFLOW__SMTP__SMTP_PORT: '1025'
+    AIRFLOW__SMTP__SMTP_STARTTLS: 'False'
+    AIRFLOW__SMTP__SMTP_SSL: 'False'
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: alerts@flight-price-pipeline.local
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data
+  depends_on:
+    airflow-metadata:
+      condition: service_healthy
+    mysql-staging:
+      condition: service_healthy
+    postgres-analytics:
+      condition: service_healthy
+    mailhog:
+      condition: service_started
 
 services:
 
@@ -52,6 +102,68 @@ services:
       retries: 10
       start_period: 15s
 
+  mailhog:
+    image: mailhog/mailhog
+    container_name: mailhog
+    restart: always
+    ports:
+      - "8025:8025"  # web inbox: http://localhost:8025
+
+  airflow-metadata:
+    image: postgres:16
+    container_name: airflow-metadata
+    restart: always
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-metadata-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin --password admin \
+          --firstname Admin --lastname Admin \
+          --role Admin --email admin@example.com || true
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
 volumes:
   mysql-staging-data:
   postgres-analytics-data:
+  airflow-metadata-data:
