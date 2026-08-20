@@ -110,7 +110,7 @@ def _finish_run(engine, batch_id: str, status: str, rows: int, error_message: st
         )
 
 
-def ingest() -> int:
+def ingest() -> dict:
     if not CSV_PATH.exists():
         raise FileNotFoundError(f"CSV not found: {CSV_PATH}")
 
@@ -152,13 +152,13 @@ def ingest() -> int:
         raise
 
     _finish_run(engine, batch_id, status="SUCCESS", rows=total)
-    return total
+    return {"batch_id": batch_id, "rows_loaded": total}
 
 
 if __name__ == "__main__":
     try:
-        rows = ingest()
-        print(f"\nLoaded {rows:,} rows into {TABLE}")
+        result = ingest()
+        print(f"\nLoaded {result['rows_loaded']:,} rows into {TABLE} (batch {result['batch_id']})")
     except Exception as exc:
         print(f"INGESTION FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
         sys.exit(1)  # non-zero exit tells Airflow the task failed
