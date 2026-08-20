@@ -1,5 +1,8 @@
 """Load transformed data + KPIs into Postgres, for one batch.
 
+Reads transform's saved output (see compute_kpis.save_transform_result) -
+does not call transform() itself. Run compute_kpis first.
+
 Two things this is built around:
 - Consistency: the audit row (load_runs) is logged in its own transaction
   (so a failure is still visible), but the actual data tables (fact +
@@ -18,7 +21,7 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 
 from src.ingestion.ingest_to_mysql import get_engine as get_mysql_engine, get_latest_batch_id
-from src.transform.compute_kpis import transform
+from src.transform.compute_kpis import load_transform_result
 from src.utils.settings import get_postgres_config
 
 FACT_TABLE = "fact_flight_prices"
@@ -102,7 +105,7 @@ def load(batch_id: str = None) -> dict:
     mysql_engine = get_mysql_engine()
     batch_id = batch_id or get_latest_batch_id(mysql_engine)
 
-    result = transform(batch_id)
+    result = load_transform_result(batch_id)
     fact_rows = result["rows"][FACT_COLUMNS]
     kpis = result["kpis"]
     for kpi_df in kpis.values():

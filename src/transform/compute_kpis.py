@@ -3,10 +3,14 @@
 Reads only rows flagged valid by validate_staging. Recomputes Total Fare
 from Base Fare + Tax & Surcharge unconditionally (staging's stored value
 isn't trusted - see validate_staging's fare_mismatch history). Output is
-one dataframe per KPI, ready for the Postgres load step.
+one dataframe per KPI, saved to disk so the load step doesn't need to
+recompute anything or receive it via XCom (XCom is for small metadata,
+not bulk data).
 """
 
+import pickle
 import sys
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import text
@@ -16,6 +20,10 @@ from src.ingestion.ingest_to_mysql import get_engine, get_latest_batch_id
 STAGING_TABLE = "stg_flight_prices"
 RESULTS_TABLE = "stg_validation_results"
 FARE_TOLERANCE = 0.01
+
+# Where transform's output is handed off to the load step. Shared disk is
+# fine under LocalExecutor (transform and load run on the same machine).
+TRANSFORM_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "data" / "transformed"
 
 # Seasonality values treated as high-demand travel periods.
 PEAK_SEASONS = {"Eid", "Winter Holidays", "Hajj"}
@@ -109,6 +117,25 @@ def transform(batch_id: str = None) -> dict:
     }
 
 
+def save_transform_result(result: dict) -> Path:
+    """Hand off transform's output to the load step via a file, not XCom."""
+    TRANSFORM_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = TRANSFORM_OUTPUT_DIR / f"{result['batch_id']}.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(result, f)
+    return path
+
+
+def load_transform_result(batch_id: str) -> dict:
+    """Read back what transform() saved for this batch. Load calls this
+    instead of calling transform() itself - they're separate steps."""
+    path = TRANSFORM_OUTPUT_DIR / f"{batch_id}.pkl"
+    if not path.exists():
+        raise FileNotFoundError(f"No saved transform output for batch {batch_id}. Run transform first.")
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
 def _print_summary(result: dict) -> None:
     print(f"batch {result['batch_id']}")
     print(f"  rows transformed: {len(result['rows']):,}")
@@ -121,7 +148,9 @@ def _print_summary(result: dict) -> None:
 if __name__ == "__main__":
     try:
         result = transform()
+        path = save_transform_result(result)
         _print_summary(result)
+        print(f"\nSaved to {path}")
     except Exception as exc:
         print(f"TRANSFORM FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -1,13 +1,15 @@
-"""Flight Price pipeline: ingest -> validate -> transform & load.
+"""Flight Price pipeline: ingest -> validate -> transform -> load.
 
-Transform and load are one task, not two: transform's output only matters
-if it's immediately persisted, and splitting them would mean either
-recomputing the transform twice or passing ~57k rows through XCom (XCom is
-for small metadata, not bulk data). Neither is worth it.
+transform and load are separate tasks, not one. transform computes and
+saves its output to disk (see compute_kpis.save_transform_result); load
+reads that file back rather than recomputing or receiving it via XCom
+(XCom is for small metadata, not the ~57k rows this actually is). Shared
+disk between tasks is fine here since Airflow runs under LocalExecutor -
+both tasks execute on the same machine.
 
 batch_id is generated once, by ingest, and passed to every task after it
-via XCom - so validate/load always act on the exact batch this run just
-produced, not just "whatever the latest batch happens to be".
+via XCom - so validate/transform/load always act on the exact batch this
+run just produced, not just "whatever the latest batch happens to be".
 """
 
 from datetime import datetime
@@ -31,7 +33,16 @@ def _validate(**context):
     print(validate(batch_id))
 
 
-def _transform_and_load(**context):
+def _transform(**context):
+    from src.transform.compute_kpis import save_transform_result, transform
+
+    batch_id = context["ti"].xcom_pull(task_ids="ingest", key="batch_id")
+    result = transform(batch_id)
+    path = save_transform_result(result)
+    print(f"batch {batch_id}: transformed {len(result['rows']):,} rows, saved to {path}")
+
+
+def _load(**context):
     from src.loading.load_to_postgres import load
 
     batch_id = context["ti"].xcom_pull(task_ids="ingest", key="batch_id")
@@ -54,6 +65,7 @@ with DAG(
 ) as dag:
     ingest_task = PythonOperator(task_id="ingest", python_callable=_ingest)
     validate_task = PythonOperator(task_id="validate", python_callable=_validate)
-    transform_and_load_task = PythonOperator(task_id="transform_and_load", python_callable=_transform_and_load)
+    transform_task = PythonOperator(task_id="transform", python_callable=_transform)
+    load_task = PythonOperator(task_id="load", python_callable=_load)
 
-    ingest_task >> validate_task >> transform_and_load_task
+    ingest_task >> validate_task >> transform_task >> load_task
