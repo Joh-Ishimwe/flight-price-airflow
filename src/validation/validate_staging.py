@@ -14,6 +14,9 @@ from src.ingestion.ingest_to_mysql import get_engine, get_latest_batch_id
 
 STAGING_TABLE = "stg_flight_prices"
 RESULTS_TABLE = "stg_validation_results"
+ALERTS_TABLE = "stg_quality_alerts"
+# Above this invalid-row percentage, a batch gets flagged for human review.
+REVIEW_THRESHOLD_PCT = 5.0
 
 REQUIRED_COLUMNS = [
     "airline", "source_code", "source_name",
@@ -101,8 +104,15 @@ def validate(batch_id: str = None) -> dict:
 
     valid_count = int(results["is_valid"].sum())
     invalid_count = len(results) - valid_count
+    invalid_pct = round(100 * invalid_count / len(results), 2)
     reason_counts = (
         all_reasons.explode().dropna().value_counts().to_dict()
+    )
+    needs_review = invalid_pct > REVIEW_THRESHOLD_PCT
+
+    _record_quality_alert(
+        engine, batch_id, len(results), invalid_count, invalid_pct,
+        reason_counts, needs_review,
     )
 
     summary = {
@@ -110,16 +120,44 @@ def validate(batch_id: str = None) -> dict:
         "total_rows": len(results),
         "valid_rows": valid_count,
         "invalid_rows": invalid_count,
+        "invalid_pct": invalid_pct,
+        "needs_review": needs_review,
         "reason_counts": reason_counts,
     }
     return summary
+
+
+def _record_quality_alert(engine, batch_id, total_rows, invalid_rows, invalid_pct, reason_counts, needs_review) -> None:
+    """One row per batch in stg_quality_alerts - a human can check this
+    table for anything needing review, without scanning per-row results."""
+    reason_summary = ",".join(f"{k}:{v}" for k, v in reason_counts.items()) or None
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"DELETE FROM {ALERTS_TABLE} WHERE batch_id = :batch_id"),
+            {"batch_id": batch_id},
+        )
+        conn.execute(
+            text(
+                f"""
+                INSERT INTO {ALERTS_TABLE}
+                    (batch_id, total_rows, invalid_rows, invalid_pct, reason_summary, needs_review)
+                VALUES (:batch_id, :total_rows, :invalid_rows, :invalid_pct, :reason_summary, :needs_review)
+                """
+            ),
+            {
+                "batch_id": batch_id, "total_rows": total_rows, "invalid_rows": invalid_rows,
+                "invalid_pct": invalid_pct, "reason_summary": reason_summary, "needs_review": needs_review,
+            },
+        )
 
 
 def _print_summary(summary: dict) -> None:
     print(f"batch {summary['batch_id']}")
     print(f"  total:   {summary['total_rows']:,}")
     print(f"  valid:   {summary['valid_rows']:,}")
-    print(f"  invalid: {summary['invalid_rows']:,}")
+    print(f"  invalid: {summary['invalid_rows']:,} ({summary['invalid_pct']}%)")
+    if summary["needs_review"]:
+        print(f"  NEEDS REVIEW - invalid rate above {REVIEW_THRESHOLD_PCT}% threshold")
     if summary["reason_counts"]:
         print("  reasons:")
         for reason, count in sorted(summary["reason_counts"].items(), key=lambda x: -x[1]):

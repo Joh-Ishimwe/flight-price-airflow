@@ -68,3 +68,18 @@ CREATE TABLE IF NOT EXISTS stg_validation_results (
     FOREIGN KEY (batch_id) REFERENCES ingestion_runs(batch_id),
     INDEX idx_batch_valid (batch_id, is_valid)
 ) ENGINE=InnoDB;
+
+-- Batch-level quality summary: lets a human check "is this batch
+-- trustworthy" at a glance, instead of scanning stg_validation_results
+-- row by row. Doesn't block the pipeline - just flags for review.
+CREATE TABLE IF NOT EXISTS stg_quality_alerts (
+    batch_id        VARCHAR(64)   PRIMARY KEY,
+    total_rows      INT           NOT NULL,
+    invalid_rows    INT           NOT NULL,
+    invalid_pct     DECIMAL(5, 2) NOT NULL,
+    reason_summary  VARCHAR(500),
+    needs_review    BOOLEAN       NOT NULL,
+    flagged_at      DATETIME      DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (batch_id) REFERENCES ingestion_runs(batch_id)
+) ENGINE=InnoDB;
